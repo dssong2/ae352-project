@@ -28,8 +28,8 @@ class EOM:
         """Set numeric parameters for the EOMs.
 
         Args:
-            mass (float): mass of the quadrotor_
-            inertia (np.array): inertia matrix or vector of the quadrotor_
+            mass (float): mass of the quadrotor
+            inertia (np.array): inertia matrix or vector of the quadrotor
             leg_length (float): length of the quadrotor legs
             k_f_val (float): thrust constant
             k_yaw_val (float): yaw torque constant
