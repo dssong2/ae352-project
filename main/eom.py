@@ -3,30 +3,62 @@ import numpy as np
 
 class EOM:
     def __init__(self):
-        self.mass = None
-        self.inertia = None
-        self.leg_length = None
-        self.k_f = None
-        self.params = {}
+        """Equations of Motion for a quadrotor UAV."""
+        self.mass : float = None         # mass (scalar)
+        self.inertia : np.array = None   # inertia (3x3 matrix or 3-vector)
+        self.leg_length : float = None   # leg length (scalar)
+        self.k_f : float = None          # thrust constant (scalar)
+        self.k_yaw : float = None        # yaw torque constant (scalar)
+        self.params : dict = {}          # dictionary mapping symbolic params to numeric values
         
         # placeholders for symbolic stuff
-        self.x_sym = None      # state vector symbols
-        self.u_sym = None      # input vector symbols
-        self.p_sym = None      # parameter symbols
-        self.f_sym = None      # f(x,u,p) symbolic EOM
-
+        self.x_sym : Matrix = None      # state vector symbols
+        self.u_sym : Matrix = None      # input vector symbols
+        self.p_sym : Matrix = None      # parameter symbols
+        self.f_sym : Matrix = None      # f(x,u,p) symbolic EOM
+        self.f_num : Matrix = None      # f(x,u,p) numeric EOM
     def set_parameters(self,
                  mass: float,
                  inertia: np.array,
                  leg_length: float,
-                 k_f: float):
+                 k_f_val: float,
+                 k_yaw_val: float):
+        """Set numeric parameters for the EOMs.
+
+        Args:
+            mass (float): mass of the quadrotor_
+            inertia (np.array): inertia matrix or vector of the quadrotor_
+            leg_length (float): length of the quadrotor legs
+            k_f_val (float): thrust constant
+            k_yaw_val (float): yaw torque constant
+        Raises:
+            ValueError: if symbolic EOMs have not been derived yet.
+        """
+        if self.p_sym is None:
+            raise ValueError("Symbolic EOMs must be derived first.")
+        
+        m, Jx, Jy, Jz, l, k_f, g, k_yaw = self.p_sym
         self.mass = mass
-        self.inertia = inertia  # should be [Jx, Jy, Jz] or 3x3 with those on diag
+        self.inertia = inertia
         self.leg_length = leg_length
-        self.k_f = k_f
-        self.params = {}
+        self.k_f = k_f_val
+        self.k_yaw = k_yaw_val
+        
+        self.params = {
+            m: mass,
+            Jx: inertia[0, 0] if inertia.shape == (3, 3) else inertia[0],
+            Jy: inertia[1, 1] if inertia.shape == (3, 3) else inertia[1],
+            Jz: inertia[2, 2] if inertia.shape == (3, 3) else inertia[2],
+            l: leg_length,
+            k_f: k_f_val,
+            k_yaw: k_yaw_val,
+            g: Float(9.81),
+        }
 
     def derive_eoms_symbolic(self):
+        """Derive the symbolic equations of motion for the quadrotor UAV.
+        """
+        
         # -----------------------------
         # State symbols
         # -----------------------------
@@ -62,17 +94,17 @@ class EOM:
         Rz = Matrix([
             [cos(psi), -sin(psi), 0],
             [sin(psi),  cos(psi), 0],
-            [0,             0,            1],
+            [0, 0, 1],
         ])
         Ry = Matrix([
-            [ cos(theta), 0, sin(theta)],
-            [ 0,              1, 0             ],
+            [cos(theta), 0, sin(theta)],
+            [ 0, 1, 0],
             [-sin(theta), 0, cos(theta)],
         ])
         Rx = Matrix([
-            [1, 0,              0             ],
-            [0, cos(phi),  -sin(phi)],
-            [0, sin(phi),   cos(phi)],
+            [1, 0, 0],
+            [0, cos(phi), -sin(phi)],
+            [0, sin(phi), cos(phi)],
         ])
 
         R_body_in_world : Matrix = Rz @ Ry @ Rx
@@ -177,4 +209,13 @@ class EOM:
         self.f_sym = f
 
     def derive_eoms_numeric(self):
-        pass
+        """Evaluate the symbolic equations of motion at the given numeric parameters.
+
+        Raises:
+            ValueError: if symbolic EOMs have not been derived yet.
+        """
+        if self.f_sym is None:
+            raise ValueError("Symbolic EOMs must be derived first.")
+
+        self.f_num = self.f_sym.subs(self.params).evalf()
+        
