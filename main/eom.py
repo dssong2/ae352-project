@@ -179,6 +179,7 @@ class EOM:
         angles_dot = M @ w_in_body           # [psi_dot, theta_dot, phi_dot]^T
 
         # translational dynamics in BODY frame
+        ## Check this equation later, coriolis force term included
         v_dot = (1 / m) * (f_in_body - w_in_body.cross(m * v_in_body))
 
         # rotational dynamics in BODY frame
