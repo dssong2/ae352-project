@@ -17,6 +17,8 @@ class EOM:
         self.p_sym : Matrix = None      # parameter symbols
         self.f_sym : Matrix = None      # f(x,u,p) symbolic EOM
         self.f_num : Matrix = None      # f(x,u,p) numeric EOM
+        
+        
     def set_parameters(self,
                  mass: float,
                  inertia: np.array,
@@ -54,6 +56,7 @@ class EOM:
             k_yaw: k_yaw_val,
             g: Float(9.81),
         }
+
 
     def derive_eoms_symbolic(self):
         """Derive the symbolic equations of motion for the quadrotor UAV.
@@ -207,6 +210,7 @@ class EOM:
         self.u_sym = u
         self.p_sym = Matrix([m, Jx, Jy, Jz, l, k_f, g, k_yaw])
         self.f_sym = f
+
 
     def derive_eoms_numeric(self):
         """Evaluate the symbolic equations of motion at the given numeric parameters.
