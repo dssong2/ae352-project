@@ -2,8 +2,179 @@ from sympy import *
 import numpy as np
 
 class EOM:
-    def __init__(self, mass):
-        self.mass = mass
+    def __init__(self):
+        self.mass = None
+        self.inertia = None
+        self.leg_length = None
+        self.k_f = None
+        self.params = {}
+        
+        # placeholders for symbolic stuff
+        self.x_sym = None      # state vector symbols
+        self.u_sym = None      # input vector symbols
+        self.p_sym = None      # parameter symbols
+        self.f_sym = None      # f(x,u,p) symbolic EOM
 
-    def set_parameters(self):
-        return None
+    def set_parameters(self,
+                 mass: float,
+                 inertia: np.array,
+                 leg_length: float,
+                 k_f: float):
+        self.mass = mass
+        self.inertia = inertia  # should be [Jx, Jy, Jz] or 3x3 with those on diag
+        self.leg_length = leg_length
+        self.k_f = k_f
+        self.params = {}
+
+    def derive_eoms_symbolic(self):
+        # -----------------------------
+        # State symbols
+        # -----------------------------
+        # position in WORLD frame
+        p_x, p_y, p_z = symbols('p_x p_y p_z', real=True)
+
+        # yaw, pitch, roll (psi, theta, phi)
+        psi, theta, phi = symbols('psi theta phi', real=True)
+
+        # linear velocity in BODY frame
+        v_x, v_y, v_z = symbols('v_x v_y v_z', real=True)
+        v_in_body = Matrix([v_x, v_y, v_z])
+
+        # angular velocity in BODY frame
+        w_x, w_y, w_z = symbols('w_x w_y w_z', real=True)
+        w_in_body = Matrix([w_x, w_y, w_z])
+
+        # -----------------------------
+        # Inputs (motor torques)
+        # -----------------------------
+        tau1, tau2, tau3, tau4 = symbols('tau1 tau2 tau3 tau4', real=True)
+
+        # -----------------------------
+        # Parameters (symbolic)
+        # -----------------------------
+        m, Jx, Jy, Jz, l, k_f, g = symbols('m Jx Jy Jz l k_f g', real=True, positive=True)
+
+        J : Matrix = diag(Jx, Jy, Jz)
+
+        # -----------------------------
+        # Rotation matrices (body -> world)
+        # -----------------------------
+        Rz = Matrix([
+            [cos(psi), -sin(psi), 0],
+            [sin(psi),  cos(psi), 0],
+            [0,             0,            1],
+        ])
+        Ry = Matrix([
+            [ cos(theta), 0, sin(theta)],
+            [ 0,              1, 0             ],
+            [-sin(theta), 0, cos(theta)],
+        ])
+        Rx = Matrix([
+            [1, 0,              0             ],
+            [0, cos(phi),  -sin(phi)],
+            [0, sin(phi),   cos(phi)],
+        ])
+
+        R_body_in_world : Matrix = Rz @ Ry @ Rx
+
+        # -----------------------------
+        # Angular velocity -> Euler angle rates
+        # (using your original mapping construction)
+        # -----------------------------
+        ex = Matrix([[1], [0], [0]])
+        ey = Matrix([[0], [1], [0]])
+        ez = Matrix([[0], [0], [1]])
+
+        M = simplify(
+            Matrix.hstack((Ry @ Rx).T @ ez, Rx.T @ ey, ex).inv(),
+            full=True
+        )
+
+        # -----------------------------
+        # Individual rotor thrusts from motor torques
+        # fz_n = tau_n * k_f   (k_f = b/a)
+        # -----------------------------
+        F1 = k_f * tau1
+        F2 = k_f * tau2
+        F3 = k_f * tau3
+        F4 = k_f * tau4
+
+        # Net thrust along body z
+        Fz_total = F1 + F2 + F3 + F4
+
+        # -----------------------------
+        # Forces in body frame
+        # -----------------------------
+        # gravity in world, then in body
+        F_grav_world = Matrix([[0], [0], [-m * g]])
+        F_grav_body  = R_body_in_world.T @ F_grav_world
+
+        # thrust in body frame (along +z_body)
+        F_thrust_body = Matrix([[0], [0], [Fz_total]])
+
+        # total applied force in body
+        f_in_body = F_grav_body + F_thrust_body
+
+        # -----------------------------
+        # Body torques from arm length and rotor forces (plus config)
+        # -----------------------------
+        # roll (x):  tau_x = l (F2 - F4)
+        # pitch (y): tau_y = l (F3 - F1)
+        # yaw (z):   tau_z from differential motor torque
+        #
+        # Simple yaw model: reaction yaw torque proportional to motor torque
+        #   tau_z ∝ (-tau1 + tau2 - tau3 + tau4)
+        k_yaw = symbols('k_yaw', real=True)  # extra yaw scaling param
+
+        tau_x_expr = l * (F2 - F4)
+        tau_y_expr = l * (F3 - F1)
+        tau_z_expr = k_yaw * (-tau1 + tau2 - tau3 + tau4)
+
+        tau_in_body = Matrix([[tau_x_expr],
+                              [tau_y_expr],
+                              [tau_z_expr]])
+
+        # -----------------------------
+        # Equations of motion
+        # -----------------------------
+        # position dynamics in WORLD frame
+        p_dot = R_body_in_world @ v_in_body  # [p_x_dot, p_y_dot, p_z_dot]^T
+
+        # attitude kinematics (psi, theta, phi)
+        angles_dot = M @ w_in_body           # [psi_dot, theta_dot, phi_dot]^T
+
+        # translational dynamics in BODY frame
+        v_dot = (1 / m) * (f_in_body - w_in_body.cross(m * v_in_body))
+
+        # rotational dynamics in BODY frame
+        w_dot = J.inv() @ (tau_in_body - w_in_body.cross(J @ w_in_body))
+
+        # -----------------------------
+        # Pack state and dynamics
+        # -----------------------------
+        x = Matrix([
+            p_x, p_y, p_z,
+            psi, theta, phi,
+            v_x, v_y, v_z,
+            w_x, w_y, w_z,
+        ])
+
+        u = Matrix([tau1, tau2, tau3, tau4])
+
+        f = Matrix.vstack(
+            p_dot,        # 3x1
+            angles_dot,   # 3x1
+            v_dot,        # 3x1
+            w_dot,        # 3x1
+        )
+
+        f = simplify(f, full=True)
+
+        # store symbolic structures on the object
+        self.x_sym = x
+        self.u_sym = u
+        self.p_sym = Matrix([m, Jx, Jy, Jz, l, k_f, g, k_yaw])
+        self.f_sym = f
+
+    def derive_eoms_numeric(self):
+        pass
