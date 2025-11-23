@@ -21,6 +21,7 @@ class EOM:
         
         self.m_e : dict = None  # equilibrium mass
         self.n_e : dict = None  # equilibrium input
+        self.tau_e : float = None  # equilibrium motor torque per rotor
         
         self.A_sym : Matrix = None  # state matrix
         self.B_sym : Matrix = None  # input matrix
@@ -295,6 +296,7 @@ class EOM:
 
         self.m_e = m_e
         self.n_e = n_e
+        self.tau_e = tau_e
         
     
     def get_AB(self):
