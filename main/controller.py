@@ -171,3 +171,12 @@ class Controller:
         plt.grid()
         plt.legend()
         plt.show()
+        
+        
+    def plot_all(self):
+        self.plot_position()
+        self.plot_velocity()
+        self.plot_attitude()
+        self.plot_angular_velocity()
+        self.plot_motor_torques()
+        self.plot_propeller_rpm()
