@@ -2,6 +2,7 @@ from eom import EOM
 from sympy import *
 import numpy as np
 from matplotlib import pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
 class Controller:
     def __init__(
@@ -97,8 +98,82 @@ class Controller:
         plt.grid()
         plt.legend()
         plt.show()
-        
-        
+    
+    def plot_path(self, elev=90, azim=-90, max_points=1000):
+        """Plot the 3D path with a time-based color gradient (downsampled)."""
+        if len(self.states) == 0:
+            print("No states logged; nothing to plot.")
+            return
+
+        states = np.array(self.states)
+        t = np.array(self.ts)
+
+        # -----------------------------
+        # Downsample if too many points
+        # -----------------------------
+        N = len(states)
+        if N > max_points:
+            idx = np.linspace(0, N - 1, max_points).astype(int)
+            states = states[idx]
+            t = t[idx]
+
+        x = states[:, 0]
+        y = states[:, 1]
+        z = states[:, 2]
+
+        # Normalize time for color mapping
+        t_norm = (t - t.min()) / (t.max() - t.min() + 1e-9)
+
+        # Make colored segments
+        points = np.array([x, y, z]).T.reshape(-1, 1, 3)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+        cmap = plt.get_cmap("turbo")  # or "nipy_spectral", etc.
+        lc = Line3DCollection(segments, cmap=cmap)
+        lc.set_array(t_norm)
+        lc.set_linewidth(2)
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        ax.add_collection3d(lc)
+
+        # Markers
+        ax.scatter(x[0], y[0], z[0], c="green", s=40, label="start")
+        ax.scatter(x[-1], y[-1], z[-1], c="red", s=40, label="end")
+
+        # Labels & style
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+        ax.set_zlabel("z [m]")
+        ax.set_title("3D Trajectory Path (Colored by Time)")
+        ax.legend()
+        ax.view_init(elev=elev, azim=azim)
+        ax.grid(True)
+
+        # Equal scaling
+        max_range = np.array([x.max() - x.min(),
+                            y.max() - y.min(),
+                            z.max() - z.min()]).max() / 2.0
+        mid_x = (x.max() + x.min()) * 0.5
+        mid_y = (y.max() + y.min()) * 0.5
+        mid_z = (z.max() + z.min()) * 0.5
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+        # Colorbar with REAL time labels
+        cbar = fig.colorbar(lc, ax=ax, pad=0.1)
+        ticks = np.linspace(0, 1, 5)
+        tick_labels = np.linspace(t.min(), t.max(), 5)
+        cbar.set_ticks(ticks)
+        cbar.set_ticklabels([f"{v:.1f}s" for v in tick_labels])
+        cbar.set_label("Time [s]")
+
+        plt.tight_layout()
+        plt.show()
+
+
+
     def plot_attitude(self):
         """Plot angular position history."""
         phi = np.array(self.states)[:, 3]
@@ -175,6 +250,7 @@ class Controller:
         
     def plot_all(self):
         self.plot_position()
+        self.plot_path()
         self.plot_velocity()
         self.plot_attitude()
         self.plot_angular_velocity()
