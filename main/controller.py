@@ -35,8 +35,8 @@ class Controller:
         self.states : list = []  # To store state history
         self.inputs : list = []  # To store input history
         self.ts : list = []      # To store time history
-        
-    
+        self.des_states = []
+         
     def setK(self, K: np.array):
         """Set the gain matrix K.
 
@@ -64,6 +64,7 @@ class Controller:
         self.states.append(x)
         self.inputs.append(u_actual)   # log actual motor commands
         self.ts.append(t)
+        self.des_states.append(x_des.copy())
     
     ## Plotting functions ##
     def plot_position(self):
@@ -225,8 +226,151 @@ class Controller:
         plt.grid()
         plt.legend()
         plt.show()
-        
     
+    def plot_track(self, flight_id=1, dt_eval=0.5):
+        """
+        Generic trajectory tracking plot and metrics.
+        
+        For all flights:
+        - position error vs time
+        - yaw error vs time
+        - global RMS error
+
+        For flight_id == 3:
+        - checks 5m leg timing (should be ~5s)
+        - checks 5m leg distances (should be ~5m)
+        - checks yaw = +90° requirement (final and segment RMS)
+        """
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        if len(self.states) == 0 or not hasattr(self, "des_states") or len(self.des_states) == 0:
+            print("No logged desired states; run a flight first.")
+            return
+
+        states = np.array(self.states)
+        des    = np.array(self.des_states)
+        ts     = np.array(self.ts)
+
+        # --- basic errors ---
+        pos     = states[:, 0:3]
+        pos_des = des[:,    0:3]
+        err_pos = pos - pos_des
+        err_norm = np.linalg.norm(err_pos, axis=1)
+
+        yaw     = states[:, 3]
+        yaw_des = des[:,    3]
+        yaw_err = (yaw - yaw_des + np.pi) % (2*np.pi) - np.pi
+
+        # --- downsample for plotting ---
+        dt_sim = ts[1] - ts[0]
+        stride = max(1, int(dt_eval / dt_sim))
+
+        ts_s   = ts[::stride]
+        err_s  = err_norm[::stride]
+        yaw_s  = yaw_err[::stride]
+
+        # --- plots ---
+        fig, ax = plt.subplots(2, 1, sharex=True, figsize=(8,6))
+
+        ax[0].plot(ts_s, err_s)
+        ax[0].set_ylabel("‖pos error‖ [m]")
+        ax[0].set_title(f"Flight {flight_id} Tracking Error")
+        ax[0].grid(True)
+
+        ax[1].plot(ts_s, yaw_s)
+        ax[1].set_ylabel("yaw error [rad]")
+        ax[1].set_xlabel("time [s]")
+        ax[1].grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+        # --- global RMS ---
+        rms_pos = np.sqrt(np.mean(err_norm**2))
+        rms_yaw = np.sqrt(np.mean(yaw_err**2))
+
+        print(f"Global RMS pos error:  {rms_pos:.3f} m")
+        print(f"Global RMS yaw error:  {rms_yaw:.3f} rad")
+
+        # --- Flight 3 requirement checks ---
+        if flight_id == 3:
+            self._flight3_checks(ts, states, des)
+
+    def _flight3_checks(self, ts, states, des):
+        """
+        Internal helper: Flight 3 mission requirement checks.
+        Uses known waypoints:
+        Leg 1: (0,0,1) -> (5,0,1)
+        Leg 2: (5,0,1) -> (5,5,1)
+        Desired yaw = +90° after yaw segment.
+        """
+        import numpy as np
+
+        states = np.array(states)
+        des    = np.array(des)
+        ts     = np.array(ts)
+
+        pos     = states[:, 0:3]
+        pos_des = des[:,    0:3]
+        yaw     = states[:, 3]
+        yaw_des = des[:,    3]
+
+        def find_idx_first(point, tol=1e-2):
+            d = np.linalg.norm(pos_des - np.array(point), axis=1)
+            idx = np.where(d < tol)[0]
+            if len(idx) == 0:
+                return int(np.argmin(d))
+            return int(idx[0])
+
+        def find_idx_last(point, tol=1e-2):
+            d = np.linalg.norm(pos_des - np.array(point), axis=1)
+            idx = np.where(d < tol)[0]
+            if len(idx) == 0:
+                return int(np.argmin(d))
+            return int(idx[-1])
+
+        print("\n--- Flight 3 Mission Checks ---")
+
+        # ---- Leg 1: (0,0,1) -> (5,0,1) ----
+        # start AFTER ascent+hover: last time at (0,0,1)
+        start1 = find_idx_last([0.0, 0.0, 1.0])
+        # end at first arrival at (5,0,1)
+        end1   = find_idx_first([5.0, 0.0, 1.0])
+
+        if end1 > start1:
+            t_leg1 = ts[end1] - ts[start1]
+            d_leg1 = np.linalg.norm(pos[end1] - pos[start1])
+            print(f"Leg 1 (5m) duration: {t_leg1:.3f} s (target ~5 s)")
+            print(f"Leg 1 distance:      {d_leg1:.3f} m (target = 5 m)")
+        else:
+            print("Warning: Could not identify 1st leg indices")
+
+        # ---- Leg 2: (5,0,1) -> (5,5,1) ----
+        # start AFTER hover+yaw: last time at (5,0,1)
+        start2 = find_idx_last([5.0, 0.0, 1.0])
+        # end at first arrival at (5,5,1)
+        end2   = find_idx_first([5.0, 5.0, 1.0])
+
+        if end2 > start2:
+            t_leg2 = ts[end2] - ts[start2]
+            d_leg2 = np.linalg.norm(pos[end2] - pos[start2])
+            print(f"Leg 2 (5m) duration: {t_leg2:.3f} s (target ~5 s)")
+            print(f"Leg 2 distance:      {d_leg2:.3f} m (target = 5 m)")
+
+            # yaw tracking on leg 2
+            yaw_err_seg2 = (yaw[start2:end2] - yaw_des[start2:end2] + np.pi) % (2*np.pi) - np.pi
+            rms_yaw_leg2 = np.sqrt(np.mean(yaw_err_seg2**2))
+            print(f"RMS yaw error on leg 2: {rms_yaw_leg2:.3f} rad")
+        else:
+            print("Warning: Could not identify 2nd leg indices")
+
+        # ---- Final yaw check ----
+        yaw_final_err = (yaw[-1] - yaw_des[-1] + np.pi) % (2*np.pi) - np.pi
+        print(f"Final yaw target: {yaw_des[-1]:.3f} rad (≈ +90°)")
+        print(f"Final yaw actual: {yaw[-1]:.3f} rad")
+        print(f"Final yaw error:  {yaw_final_err:.3f} rad")
+
     def plot_propeller_rpm(self):
         return # Debug this
         """Plot propeller RPM history."""
