@@ -370,6 +370,60 @@ class Controller:
         print(f"Final yaw target: {yaw_des[-1]:.3f} rad (≈ +90°)")
         print(f"Final yaw actual: {yaw[-1]:.3f} rad")
         print(f"Final yaw error:  {yaw_final_err:.3f} rad")
+    def plot_power_consumption(self, watts_per_nm=1589.0, battery_voltage=14.8, pack_capacity_mAh=8000.0):
+        """
+        Plot cumulative power consumption in mAh over the flight.
+
+        Args:
+            watts_per_nm (float): Conversion factor from torque [N*m] to power [W].
+                                  Provided from motor data (default 1589 W/(N*m)).
+            battery_voltage (float): Nominal pack voltage [V] (e.g. 4S LiPo ≈ 14.8 V).
+            pack_capacity_mAh (float): Battery capacity in mAh for percent-of-pack reporting.
+        """
+        import numpy as np
+        import matplotlib.pyplot as plt
+
+        if len(self.inputs) == 0 or len(self.ts) < 2:
+            print("No input data logged; run a simulation first.")
+            return
+
+        # Inputs: shape (N, 4) with actual motor torques [N*m]
+        u = np.array(self.inputs)  # [Nsteps, 4]
+        ts = np.array(self.ts)
+
+        # Sum absolute torque across all 4 motors
+        torque_sum = np.sum(np.abs(u), axis=1)  # [Nsteps]
+
+        # Instantaneous electrical power estimate [W]
+        P = watts_per_nm * torque_sum  # [W]
+
+        # Time step (assume constant, consistent with controller.dt)
+        dt = self.dt  # [s]
+
+        # Integrate power over time -> energy in Joules
+        # E_J(t_k) = sum_{i<=k} P_i * dt
+        energy_J = np.cumsum(P * dt)  # [J]
+
+        # Convert energy to mAh:
+        #   J = W*s, Wh = J/3600, Ah = Wh / V, mAh = 1000 * Ah
+        #   => mAh = energy_J * (1000 / (3600 * V))
+        mAh = energy_J * (1000.0 / (3600.0 * battery_voltage))
+
+        # Plot cumulative mAh vs time
+        plt.plot(ts, mAh)
+        plt.title("Cumulative Power Consumption")
+        plt.xlabel("Time [s]")
+        plt.ylabel("Consumed Capacity [mAh]")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+        total_mAh = mAh[-1]
+        print(f"Total estimated consumption: {total_mAh:.1f} mAh")
+
+        if pack_capacity_mAh is not None and pack_capacity_mAh > 0:
+            frac = 100.0 * total_mAh / pack_capacity_mAh
+            print(f"Fraction of a {pack_capacity_mAh:.0f} mAh pack: {frac:.1f}%")
 
     def plot_propeller_rpm(self):
         return # Debug this
@@ -400,3 +454,4 @@ class Controller:
         self.plot_angular_velocity()
         self.plot_motor_torques()
         self.plot_propeller_rpm()
+        self.plot_power_consumption()
